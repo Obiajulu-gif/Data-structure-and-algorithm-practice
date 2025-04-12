@@ -1,0 +1,79 @@
+#!/bin/bash
+
+# Define the file path to store the PAT securely
+PAT_FILE="$HOME/.github_pat"
+
+# Check if a GitHub repository link is provided
+if [ -z "$1" ]; then
+  echo "Usage: ./git-remote <GitHub Repository URL>"
+  exit 1
+fi
+
+# Store the GitHub repository URL
+REPO_URL=$1
+
+# Function to validate the PAT
+validate_pat() {
+  local token=$1
+  curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $token" https://api.github.com/user
+}
+
+# Check if the PAT is already stored
+if [ -f "$PAT_FILE" ]; then
+  # Read the stored PAT
+  PAT=$(cat "$PAT_FILE")
+  # Validate the stored PAT
+  STATUS_CODE=$(validate_pat "$PAT")
+  if [ "$STATUS_CODE" -ne 200 ]; then
+    echo "Stored PAT is invalid. Please provide a new PAT."
+    read -s -p "Enter your GitHub Personal Access Token (PAT): " PAT
+    echo
+    # Store the new PAT securely
+    echo "$PAT" > "$PAT_FILE"
+    chmod 600 "$PAT_FILE"
+  fi
+else
+  # Prompt the user for the PAT
+  read -s -p "Enter your GitHub Personal Access Token (PAT): " PAT
+  echo
+  # Store the PAT securely
+  echo "$PAT" > "$PAT_FILE"
+  chmod 600 "$PAT_FILE"
+fi
+
+# Extract the username from the repository URL
+USERNAME=$(echo "$REPO_URL" | awk -F'/' '{print $4}')
+
+# Construct the authenticated repository URL
+AUTHENTICATED_URL=$(echo "$REPO_URL" | sed "s#https://#https://$USERNAME:$PAT@#")
+
+# Check if the remote repository already exists
+REPO_EXISTS=$(git ls-remote "$AUTHENTICATED_URL" 2>/dev/null)
+
+if [ -z "$REPO_EXISTS" ]; then
+  echo "The remote repository does not exist. Please create it on GitHub first."
+  exit 1
+fi
+
+# Create a folder in the remote repository
+FOLDER_NAME=$(basename "$PWD")
+TEMP_DIR=$(mktemp -d)
+
+# Clone the remote repository into a temporary directory
+git clone "$AUTHENTICATED_URL" "$TEMP_DIR"
+
+# Copy the current workspace into the new folder in the cloned repository
+mkdir -p "$TEMP_DIR/$FOLDER_NAME"
+cp -r ./* "$TEMP_DIR/$FOLDER_NAME"
+
+# Commit and push the changes
+cd "$TEMP_DIR"
+git add .
+git commit -m "Add $FOLDER_NAME folder"
+git push
+
+# Clean up the temporary directory
+cd -
+rm -rf "$TEMP_DIR"
+
+echo "Folder '$FOLDER_NAME' has been added to the remote repository at $REPO_URL"
